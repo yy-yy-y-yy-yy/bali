@@ -260,4 +260,69 @@
 
             // UI
             ctx.fillStyle = '#fff'; ctx.font = '24px Arial';
-            ctx.textAlign = '
+            ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`SCORE: ${score}`, 15, 30);
+            ctx.textAlign = 'right'; ctx.fillText(`BEST: ${highScore}`, canvas.width - 15, 30);
+
+            // 床
+            ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY);
+            ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+
+            // エイムライン
+            if (state === 'aiming' && isDragging) {
+                ctx.beginPath(); ctx.setLineDash([8, 8]); ctx.moveTo(startX, startY);
+                const angle = Math.atan2(aimY - startY, aimX - startX);
+                ctx.lineTo(startX + Math.cos(angle) * 1000, startY + Math.sin(angle) * 1000);
+                ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+            }
+
+            // ブロック
+            blocks.forEach(b => {
+                ctx.fillStyle = `hsl(${(b.hp * 10 + 150) % 360}, 80%, 55%)`;
+                ctx.fillRect(b.x, b.y, b.width, b.height);
+                ctx.fillStyle = '#222'; ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText(b.hp, b.x + b.width / 2, b.y + b.height / 2);
+            });
+
+            // アイテム
+            items.forEach(item => {
+                ctx.beginPath(); ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = '#0f0'; ctx.lineWidth = 3; ctx.stroke();
+                ctx.beginPath(); ctx.arc(item.x, item.y, item.radius / 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#0f0'; ctx.fill();
+            });
+
+            // ボール
+            ctx.fillStyle = '#fff';
+            if (state === 'shooting') {
+                balls.forEach(ball => {
+                    if (ball.active) {
+                        ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2); ctx.fill();
+                    }
+                });
+            } else if (state === 'aiming') {
+                ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI * 2); ctx.fill();
+                ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                ctx.fillText('x' + ballCount, startX, startY + 20); // 文字を下に移動
+            }
+
+            // ゲームオーバー
+            if (state === 'gameover') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#fff'; ctx.font = 'bold 40px Arial';
+                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '20px Arial'; ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+            }
+        }
+
+        resetGame();
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+    </script>
+</body>
+</html>
