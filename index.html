@@ -4,325 +4,341 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
-    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <title>Ballistic Clone</title>
+    <title>Ballistic Final</title>
     <style>
-        body { 
-            margin: 0; 
-            padding: 0; 
-            background-color: #222; 
-            overflow: hidden; 
-            touch-action: none; 
-            position: fixed; 
-            top: 0; left: 0; right: 0; bottom: 0;
-            font-family: sans-serif;
-            user-select: none;
-            -webkit-user-select: none;
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #111; overflow: hidden; touch-action: none; 
+            user-select: none; -webkit-user-select: none; font-family: sans-serif;
         }
-        canvas { 
-            display: block;
-            width: 100%;
-            height: 100%;
+        #gameCanvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;
+        }
+        #errorBox {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #fff; color: #d00; padding: 20px; box-sizing: border-box; 
+            z-index: 9999; display: none; overflow-y: auto;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
+    <div id="errorBox"></div>
 
     <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
+        const errBox = document.getElementById('errorBox');
+        function showError(msg, err) {
+            errBox.style.display = 'block';
+            errBox.innerHTML += '<h3>' + msg + '</h3>';
+            if (err && err.stack) errBox.innerHTML += '<pre style="font-size:12px; color:#333; white-space:pre-wrap;">' + err.stack + '</pre><hr>';
+        }
 
-        // エラー表示用
         window.onerror = function(msg, url, line) {
-            ctx.fillStyle = '#222'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = 'red'; ctx.font = '16px Arial'; ctx.textBaseline = 'top';
-            ctx.fillText('エラー: ' + msg + ' (' + line + ')', 10, 30);
-            return false;
+            showError('エラー: ' + msg + ' (行: ' + line + ')');
+            return true;
         };
 
-        let highScore = 0;
-        try { highScore = localStorage.getItem('ballisticHighScore') || 0; } catch (e) {}
+        try {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
 
-        let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0; 
-        let balls = [], blocks = [], items = []; 
-        let state = 'aiming'; 
-        let startX = 0, startY = 0, nextStartX = null; 
-        let aimX = 0, aimY = 0, isDragging = false;
+            let highScore = 0;
+            try { highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; } catch (e) {}
 
-        const ballRadius = 6;
-        const blockCols = 7;
-        const blockPadding = 4;
-
-        function resize() {
-            canvas.width = window.innerWidth || document.documentElement.clientWidth || 320;
-            canvas.height = window.innerHeight || document.documentElement.clientHeight || 480;
-            startY = canvas.height - 100; // 床を少し上に上げて操作しやすく
-            if (state === 'aiming' && nextStartX === null) {
-                startX = canvas.width / 2;
-            }
-        }
-        window.addEventListener('resize', resize);
-        resize();
-
-        function resetGame() {
-            score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
-            blocks = []; items = []; nextStartX = null;
-            resize(); 
-            state = 'aiming';
-            spawnBlocks();
-        }
-
-        function spawnBlocks() {
-            const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
-            const blockHeight = blockWidth;
-            const startYPos = 90;
-
-            blocks.forEach(b => b.y += blockHeight + blockPadding);
-            items.forEach(i => i.y += blockHeight + blockPadding);
-
-            let isGameOver = false;
-            blocks.forEach(b => { if (b.y + b.height >= startY) isGameOver = true; });
-
-            if (isGameOver) {
-                state = 'gameover';
-                try {
-                    if (score > highScore) { highScore = score; localStorage.setItem('ballisticHighScore', highScore); }
-                } catch(e) {}
-                return;
-            }
-
-            let itemCol = Math.floor(Math.random() * blockCols);
-            for (let i = 0; i < blockCols; i++) {
-                let x = blockPadding + i * (blockWidth + blockPadding);
-                if (i === itemCol) {
-                    items.push({ x: x + blockWidth / 2, y: startYPos + blockHeight / 2, radius: blockWidth / 3.5, active: true });
-                } else if (Math.random() > 0.4) {
-                    blocks.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, hp: level });
-                }
-            }
-        }
-
-        function getTouchPos(e) {
-            let cx = e.clientX, cy = e.clientY;
-            if (e.touches && e.touches.length > 0) {
-                cx = e.touches[0].clientX; cy = e.touches[0].clientY;
-            }
-            return { x: cx, y: cy };
-        }
-
-        function handleStart(e) {
-            if (e.cancelable) e.preventDefault();
-            if (state === 'gameover') { resetGame(); return; }
-            if (state !== 'aiming') return;
-            isDragging = true;
-            const pos = getTouchPos(e);
-            aimX = pos.x; 
-            // 狙いを床より必ず上にする
-            aimY = Math.min(pos.y, startY - 30);
-        }
-        
-        function handleMove(e) {
-            if (e.cancelable) e.preventDefault();
-            if (!isDragging || state !== 'aiming') return;
-            const pos = getTouchPos(e);
-            aimX = pos.x; 
-            aimY = Math.min(pos.y, startY - 30);
-        }
-        
-        function handleEnd(e) {
-            if (e.cancelable) e.preventDefault();
-            if (!isDragging || state !== 'aiming') return;
-            isDragging = false;
-            shootBalls();
-        }
-
-        // イベントリスナーを最適化
-        canvas.addEventListener('touchstart', handleStart, {passive: false});
-        canvas.addEventListener('touchmove', handleMove, {passive: false});
-        canvas.addEventListener('touchend', handleEnd, {passive: false});
-        canvas.addEventListener('mousedown', handleStart);
-        window.addEventListener('mousemove', handleMove, {passive: false});
-        window.addEventListener('mouseup', handleEnd, {passive: false});
-
-        function shootBalls() {
-            state = 'shooting';
-            nextStartX = null;
+            let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
+            let balls = [], blocks = [], items = [];
+            let state = 'aiming'; 
+            let startX = 0, startY = 0, nextStartX = null;
+            let aimX = 0, aimY = 0, isDragging = false;
             
-            // 角度の計算
-            let dx = aimX - startX;
-            let dy = aimY - startY;
-            // 真下や真横に撃てないように角度を制限
-            if (dy > -10) dy = -10; 
-            
-            const angle = Math.atan2(dy, dx);
-            const speed = 22; // 少しスピードアップ
-            const vx = Math.cos(angle) * speed;
-            const vy = Math.sin(angle) * speed;
+            const ballRadius = 6;
+            const blockCols = 7;
+            const blockPadding = 4;
 
-            balls = [];
-            for (let i = 0; i < ballCount; i++) {
-                balls.push({ x: startX, y: startY, vx: vx, vy: vy, active: false, delay: i * 4 });
+            function resize() {
+                canvas.width = window.innerWidth || document.documentElement.clientWidth || 320;
+                canvas.height = window.innerHeight || document.documentElement.clientHeight || 480;
+                startY = canvas.height - 100;
+                if (state === 'aiming' && nextStartX === null) {
+                    startX = canvas.width / 2;
+                }
             }
-        }
 
-        function update() {
-            if (state !== 'shooting') return;
-            let activeBalls = 0;
-
-            balls.forEach(ball => {
-                // 【超重要バグ修正箇所】
-                // 以前はここで return してしまっていたため、active になった瞬間にボールが消滅（カウント0）扱いになっていました。
-                if (!ball.active) {
-                    if (ball.delay > 0) {
-                        ball.delay--; 
-                        activeBalls++; // まだ待機中なのでカウントする
-                        return; // 待機中なので動かさずに次へ
-                    } else {
-                        ball.active = true; // 出撃！ （ここは return せずに下の移動処理へ進む！）
-                    }
-                }
-
-                // ボールの移動
-                ball.x += ball.vx; 
-                ball.y += ball.vy;
-
-                // 左右の壁の反射
-                if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) {
-                    ball.vx *= -1;
-                    ball.x = ball.x - ballRadius < 0 ? ballRadius : canvas.width - ballRadius;
-                }
-                // 天井の反射
-                if (ball.y - ballRadius < 0) {
-                    ball.vy *= -1; 
-                    ball.y = ballRadius;
-                }
-
-                // 床に到達した時の処理 (vy > 0 つまり下向きに落ちてきた時のみ)
-                if (ball.vy > 0 && ball.y >= startY) {
-                    ball.active = false; 
-                    ball.y = startY;
-                    if (nextStartX === null) nextStartX = ball.x;
-                    ball.x = nextStartX;
-                    return; // 床に着いたのでこのボールの処理は終わり
-                }
-                
-                activeBalls++; // 動いているボールとしてカウント
-
-                // アイテム取得判定
-                for (let i = items.length - 1; i >= 0; i--) {
-                    let item = items[i];
-                    if (!item.active) continue;
-                    let dx = ball.x - item.x, dy = ball.y - item.y;
-                    if (Math.sqrt(dx * dx + dy * dy) <= ballRadius + item.radius) {
-                        item.active = false; extraBallsNextTurn++; items.splice(i, 1);
-                    }
-                }
-
-                // ブロック破壊判定
-                for (let i = blocks.length - 1; i >= 0; i--) {
-                    let b = blocks[i];
-                    let testX = Math.max(b.x, Math.min(ball.x, b.x + b.width));
-                    let testY = Math.max(b.y, Math.min(ball.y, b.y + b.height));
-                    let distX = ball.x - testX, distY = ball.y - testY;
-
-                    if (Math.sqrt(distX * distX + distY * distY) <= ballRadius) {
-                        // 衝突による反射方向の決定
-                        if (Math.abs(distX) > Math.abs(distY)) {
-                            ball.vx *= -1;
-                            ball.x = ball.x < b.x ? b.x - ballRadius : b.x + b.width + ballRadius;
-                        } else {
-                            ball.vy *= -1;
-                            ball.y = ball.y < b.y ? b.y - ballRadius : b.y + b.height + ballRadius;
-                        }
-                        
-                        b.hp--; 
-                        score++;
-                        if (b.hp <= 0) blocks.splice(i, 1);
-                        break; // 一度に複数のブロックに当たらないよう抜ける
-                    }
-                }
-            });
-
-            // 全てのボールが戻ってきたらターン終了
-            if (activeBalls === 0) {
-                state = 'aiming'; 
-                level++; 
-                ballCount += extraBallsNextTurn; 
-                extraBallsNextTurn = 0;
-                if (nextStartX !== null) startX = nextStartX;
+            function resetGame() {
+                score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
+                blocks = []; items = []; nextStartX = null;
+                resize(); 
+                state = 'aiming';
                 spawnBlocks();
             }
-        }
 
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            function spawnBlocks() {
+                const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
+                const blockHeight = blockWidth;
+                const startYPos = 90;
 
-            // UI
-            ctx.fillStyle = '#fff'; ctx.font = '24px Arial';
-            ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`SCORE: ${score}`, 15, 30);
-            ctx.textAlign = 'right'; ctx.fillText(`BEST: ${highScore}`, canvas.width - 15, 30);
+                blocks.forEach(b => b.y += blockHeight + blockPadding);
+                items.forEach(i => i.y += blockHeight + blockPadding);
 
-            // 床
-            ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY);
-            ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+                let isGameOver = false;
+                blocks.forEach(b => { if (b.y + b.height >= startY) isGameOver = true; });
 
-            // エイムライン
-            if (state === 'aiming' && isDragging) {
-                ctx.beginPath(); ctx.setLineDash([8, 8]); ctx.moveTo(startX, startY);
-                const angle = Math.atan2(aimY - startY, aimX - startX);
-                ctx.lineTo(startX + Math.cos(angle) * 1000, startY + Math.sin(angle) * 1000);
-                ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+                if (isGameOver) {
+                    state = 'gameover';
+                    try {
+                        if (score > highScore) {
+                            highScore = score; localStorage.setItem('ballisticHighScore', highScore);
+                        }
+                    } catch(e) {}
+                    return;
+                }
+
+                let itemCol = Math.floor(Math.random() * blockCols);
+                for (let i = 0; i < blockCols; i++) {
+                    let x = blockPadding + i * (blockWidth + blockPadding);
+                    if (i === itemCol) {
+                        // 【変更点1】アイテムにもブロックと同じ「幅と高さ（正方形エリア）」を持たせる
+                        items.push({ 
+                            x: x, 
+                            y: startYPos, 
+                            width: blockWidth, 
+                            height: blockHeight,
+                            centerX: x + blockWidth / 2, 
+                            centerY: startYPos + blockHeight / 2, 
+                            radius: blockWidth / 3.5, 
+                            active: true 
+                        });
+                    } else if (Math.random() > 0.4) {
+                        blocks.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, hp: level });
+                    }
+                }
             }
 
-            // ブロック
-            blocks.forEach(b => {
-                ctx.fillStyle = `hsl(${(b.hp * 10 + 150) % 360}, 80%, 55%)`;
-                ctx.fillRect(b.x, b.y, b.width, b.height);
-                ctx.fillStyle = '#222'; ctx.font = 'bold 20px Arial';
-                ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText(b.hp, b.x + b.width / 2, b.y + b.height / 2);
-            });
+            function getTouchPos(e) {
+                if (e.changedTouches && e.changedTouches.length > 0) {
+                    return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+                }
+                return { x: e.clientX || 0, y: e.clientY || 0 };
+            }
 
-            // アイテム
-            items.forEach(item => {
-                ctx.beginPath(); ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
-                ctx.strokeStyle = '#0f0'; ctx.lineWidth = 3; ctx.stroke();
-                ctx.beginPath(); ctx.arc(item.x, item.y, item.radius / 2, 0, Math.PI * 2);
-                ctx.fillStyle = '#0f0'; ctx.fill();
-            });
+            function handleStart(e) {
+                if (e.cancelable) e.preventDefault();
+                if (state === 'gameover') { resetGame(); return; }
+                if (state !== 'aiming') return;
+                isDragging = true;
+                const pos = getTouchPos(e);
+                aimX = pos.x; 
+                aimY = pos.y; // 以前の指の制限を解除
+            }
+            
+            function handleMove(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                const pos = getTouchPos(e);
+                aimX = pos.x; 
+                aimY = pos.y; 
+            }
+            
+            function handleEnd(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                isDragging = false;
+                shootBalls();
+            }
 
-            // ボール
-            ctx.fillStyle = '#fff';
-            if (state === 'shooting') {
+            // 【変更点2】角度を「0.5度〜179.5度」の範囲に補正する関数
+            function getClampedAimAngle() {
+                let dx = aimX - startX;
+                let dy = aimY - startY;
+                let angle = Math.atan2(dy, dx);
+                
+                // 0.5度をラジアンに変換
+                const minAngleRad = 0.5 * (Math.PI / 180); 
+                
+                // CanvasのY軸は下方向がプラスなので、マイナスの角度（上向き）になるよう補正
+                if (angle >= 0) {
+                    // 指を床より下にドラッグした場合の補正
+                    if (angle < Math.PI / 2) angle = -minAngleRad; // 右側に引いたら「右下0.5度（上向き）」
+                    else angle = -Math.PI + minAngleRad; // 左側に引いたら「左下0.5度（上向き）」
+                } else {
+                    // 通常の上方向の角度制限（水平0度やマイナスになりすぎるのを防ぐ）
+                    if (angle > -minAngleRad) angle = -minAngleRad;
+                    else if (angle < -Math.PI + minAngleRad) angle = -Math.PI + minAngleRad;
+                }
+                return angle;
+            }
+
+            function shootBalls() {
+                state = 'shooting';
+                nextStartX = null;
+                
+                // 補正された角度を取得してボールを発射
+                const angle = getClampedAimAngle();
+                const speed = 22;
+                const vx = Math.cos(angle) * speed;
+                const vy = Math.sin(angle) * speed;
+
+                balls = [];
+                for (let i = 0; i < ballCount; i++) {
+                    balls.push({ x: startX, y: startY, vx: vx, vy: vy, active: false, delay: i * 4 });
+                }
+            }
+
+            function update() {
+                if (state !== 'shooting') return;
+                let activeBalls = 0;
+
                 balls.forEach(ball => {
-                    if (ball.active) {
-                        ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2); ctx.fill();
+                    if (!ball.active) {
+                        if (ball.delay > 0) {
+                            ball.delay--; activeBalls++; return;
+                        } else {
+                            ball.active = true;
+                        }
+                    }
+
+                    ball.x += ball.vx; ball.y += ball.vy;
+
+                    // 壁反射
+                    if (ball.x - ballRadius < 0) {
+                        ball.x = ballRadius; ball.vx *= -1;
+                    } else if (ball.x + ballRadius > canvas.width) {
+                        ball.x = canvas.width - ballRadius; ball.vx *= -1;
+                    }
+                    if (ball.y - ballRadius < 0) {
+                        ball.y = ballRadius; ball.vy *= -1;
+                    }
+
+                    // 床到達判定
+                    if (ball.vy > 0 && ball.y >= startY) {
+                        ball.active = false; ball.y = startY;
+                        if (nextStartX === null) nextStartX = ball.x;
+                        ball.x = nextStartX;
+                        return;
+                    }
+                    activeBalls++;
+
+                    // 【変更点1】アイテム判定を「ブロックと同じサイズの正方形」に変更
+                    for (let i = items.length - 1; i >= 0; i--) {
+                        let item = items[i];
+                        if (!item.active) continue;
+                        
+                        let testX = Math.max(item.x, Math.min(ball.x, item.x + item.width));
+                        let testY = Math.max(item.y, Math.min(ball.y, item.y + item.height));
+                        let distX = ball.x - testX, distY = ball.y - testY;
+
+                        if ((distX * distX + distY * distY) <= ballRadius * ballRadius) {
+                            item.active = false; extraBallsNextTurn++; items.splice(i, 1);
+                        }
+                    }
+
+                    // ブロック判定
+                    for (let i = blocks.length - 1; i >= 0; i--) {
+                        let b = blocks[i];
+                        let testX = Math.max(b.x, Math.min(ball.x, b.x + b.width));
+                        let testY = Math.max(b.y, Math.min(ball.y, b.y + b.height));
+                        let distX = ball.x - testX, distY = ball.y - testY;
+
+                        if ((distX * distX + distY * distY) <= ballRadius * ballRadius) {
+                            if (Math.abs(distX) > Math.abs(distY)) {
+                                ball.vx *= -1;
+                                ball.x = ball.x < b.x ? b.x - ballRadius : b.x + b.width + ballRadius;
+                            } else {
+                                ball.vy *= -1;
+                                ball.y = ball.y < b.y ? b.y - ballRadius : b.y + b.height + ballRadius;
+                            }
+                            b.hp--; score++;
+                            if (b.hp <= 0) blocks.splice(i, 1);
+                            break;
+                        }
                     }
                 });
-            } else if (state === 'aiming') {
-                ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI * 2); ctx.fill();
-                ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-                ctx.fillText('x' + ballCount, startX, startY + 20); // 文字を下に移動
+
+                if (activeBalls === 0) {
+                    state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
+                    if (nextStartX !== null) startX = nextStartX;
+                    spawnBlocks();
+                }
             }
 
-            // ゲームオーバー
-            if (state === 'gameover') {
-                ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
-                ctx.fillStyle = '#fff'; ctx.font = 'bold 40px Arial';
-                ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
-                ctx.font = '20px Arial'; ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+                ctx.fillStyle = '#fff'; ctx.font = '24px Arial';
+                ctx.textAlign = 'left'; ctx.textBaseline = 'top'; ctx.fillText(`SCORE: ${score}`, 15, 30);
+                ctx.textAlign = 'right'; ctx.fillText(`BEST: ${highScore}`, canvas.width - 15, 30);
+
+                ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY);
+                ctx.strokeStyle = '#555'; ctx.lineWidth = 2; ctx.stroke();
+
+                if (state === 'aiming' && isDragging) {
+                    // 【変更点2】点線も「補正された角度」で描画する
+                    const angle = getClampedAimAngle();
+                    ctx.beginPath(); ctx.setLineDash([8, 8]); ctx.moveTo(startX, startY);
+                    ctx.lineTo(startX + Math.cos(angle) * 1000, startY + Math.sin(angle) * 1000);
+                    ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+                }
+
+                blocks.forEach(b => {
+                    ctx.fillStyle = `hsl(${(b.hp * 10 + 150) % 360}, 80%, 55%)`;
+                    ctx.fillRect(b.x, b.y, b.width, b.height);
+                    ctx.fillStyle = '#222'; ctx.font = 'bold 20px Arial';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText(b.hp, b.x + b.width / 2, b.y + b.height / 2);
+                });
+
+                items.forEach(item => {
+                    ctx.beginPath(); ctx.arc(item.centerX, item.centerY, item.radius, 0, Math.PI * 2);
+                    ctx.strokeStyle = '#0f0'; ctx.lineWidth = 3; ctx.stroke();
+                    ctx.beginPath(); ctx.arc(item.centerX, item.centerY, item.radius / 2, 0, Math.PI * 2);
+                    ctx.fillStyle = '#0f0'; ctx.fill();
+                });
+
+                ctx.fillStyle = '#fff';
+                if (state === 'shooting') {
+                    balls.forEach(ball => {
+                        if (ball.active) {
+                            ctx.beginPath(); ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2); ctx.fill();
+                        }
+                    });
+                } else if (state === 'aiming') {
+                    ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI * 2); ctx.fill();
+                    ctx.font = '16px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+                    ctx.fillText('x' + ballCount, startX, startY + 20);
+                }
+
+                if (state === 'gameover') {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff'; ctx.font = 'bold 40px Arial';
+                    ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                    ctx.font = '20px Arial'; ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+                }
             }
-        }
 
-        resetGame();
-        function loop() {
-            update();
-            draw();
-            requestAnimationFrame(loop);
-        }
-        loop();
+            window.addEventListener('resize', resize);
+            resize();
+            resetGame();
 
+            function loop() {
+                try {
+                    update(); draw(); requestAnimationFrame(loop);
+                } catch(e) {
+                    showError('描画ループエラー', e);
+                }
+            }
+            loop();
+
+            const opt = { passive: false };
+            canvas.addEventListener('touchstart', handleStart, opt);
+            canvas.addEventListener('touchmove', handleMove, opt);
+            canvas.addEventListener('touchend', handleEnd, opt);
+            canvas.addEventListener('mousedown', handleStart);
+            window.addEventListener('mousemove', handleMove, opt);
+            window.addEventListener('mouseup', handleEnd, opt);
+
+        } catch(globalErr) {
+            showError('初期化エラー', globalErr);
+        }
     </script>
 </body>
 </html>
