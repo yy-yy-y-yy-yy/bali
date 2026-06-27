@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Ballistic Clone</title>
+    <style>
+        body { 
+            margin: 0; 
+            padding: 0; 
+            background-color: #222; 
+            overflow: hidden; 
+            touch-action: none; /* スワイプによるスクロールを防止 */
+        }
+        canvas { 
+            display: block; 
+        }
+    </style>
+</head>
+<body>
+    <canvas id="gameCanvas"></canvas>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+
+        // 画面サイズに合わせる
+        function resize() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+        }
+        window.addEventListener('resize', resize);
+        resize();
+
+        // ゲームのパラメータ
+        let level = 1;
+        let ballCount = 5; // 初期ボール数
+        let balls = [];
+        let blocks = [];
+        let state = 'aiming'; // 'aiming', 'shooting'
+        let startX = canvas.width / 2;
+        let startY = canvas.height - 30;
+        let aimX = startX;
+        let aimY = startY - 100;
+        let isDragging = false;
+
+        const ballRadius = 6;
+        const blockRows = 8;
+        const blockCols = 7;
+        const blockPadding = 5;
+
+        // ブロック生成関数
+        function spawnBlocks() {
+            const blockWidth = (canvas.width - blockPadding * (blockCols + 1)) / blockCols;
+            const blockHeight = blockWidth;
+
+            // 既存のブロックを一段下げる
+            blocks.forEach(b => b.y += blockHeight + blockPadding);
+
+            // 新しい列を生成（ランダムで配置）
+            for (let i = 0; i < blockCols; i++) {
+                if (Math.random() > 0.4) {
+                    blocks.push({
+                        x: blockPadding + i * (blockWidth + blockPadding),
+                        y: blockPadding + 50,
+                        width: blockWidth,
+                        height: blockHeight,
+                        hp: level
+                    });
+                }
+            }
+        }
+
+        // 初期化
+        spawnBlocks();
+
+        // 入力処理（タッチ＆マウス）
+        function handleStart(e) {
+            if (state !== 'aiming') return;
+            isDragging = true;
+            updateAim(e);
+        }
+        function handleMove(e) {
+            if (!isDragging || state !== 'aiming') return;
+            updateAim(e);
+        }
+        function handleEnd(e) {
+            if (!isDragging || state !== 'aiming') return;
+            isDragging = false;
+            shootBalls();
+        }
+
+        function updateAim(e) {
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            // 引っ張る方向と逆に向ける（スリングショット操作）
+            const dx = startX - clientX;
+            const dy = startY - clientY;
+            aimX = startX + dx;
+            aimY = startY + dy;
+            
+            // 下方向には撃てないように制限
+            if (aimY > startY - 20) aimY = startY - 20; 
+        }
+
+        canvas.addEventListener('touchstart', handleStart);
+        canvas.addEventListener('touchmove', handleMove);
+        canvas.addEventListener('touchend', handleEnd);
+        canvas.addEventListener('mousedown', handleStart);
+        canvas.addEventListener('mousemove', handleMove);
+        canvas.addEventListener('mouseup', handleEnd);
+
+        // ボールの発射
+        function shootBalls() {
+            state = 'shooting';
+            const angle = Math.atan2(aimY - startY, aimX - startX);
+            const speed = 15; // ボールの速さ
+            const vx = Math.cos(angle) * speed;
+            const vy = Math.sin(angle) * speed;
+
+            balls = [];
+            for (let i = 0; i < ballCount; i++) {
+                // 少しずつ遅らせて発射するよう設定
+                balls.push({
+                    x: startX,
+                    y: startY,
+                    vx: vx,
+                    vy: vy,
+                    active: false,
+                    delay: i * 5 
+                });
+            }
+        }
+
+        // 当たり判定と更新
+        let frameCount = 0;
+        function update() {
+            frameCount++;
+            let activeBalls = 0;
+
+            if (state === 'shooting') {
+                balls.forEach(ball => {
+                    // 発射ディレイの処理
+                    if (!ball.active) {
+                        if (ball.delay <= 0) ball.active = true;
+                        else ball.delay--;
+                        activeBalls++;
+                        return;
+                    }
+
+                    // 移動
+                    ball.x += ball.vx;
+                    ball.y += ball.vy;
+
+                    // 壁との反射
+                    if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) {
+                        ball.vx *= -1;
+                        ball.x = ball.x - ballRadius < 0 ? ballRadius : canvas.width - ballRadius;
+                    }
+                    if (ball.y - ballRadius < 0) {
+                        ball.vy *= -1;
+                        ball.y = ballRadius;
+                    }
+
+                    // 底に到達したら停止
+                    if (ball.y + ballRadius > canvas.height) {
+                        ball.active = false;
+                        // 最初のボールが落ちた位置を次のスタート位置にする（簡易版では中央固定にしています）
+                        return;
+                    }
+
+                    activeBalls++;
+
+                    // ブロックとの当たり判定（簡易的な矩形と円の判定）
+                    for (let i = blocks.length - 1; i >= 0; i--) {
+                        let b = blocks[i];
+                        // 最も近いXとYを見つける
+                        let testX = ball.x;
+                        let testY = ball.y;
+
+                        if (ball.x < b.x) testX = b.x; 
+                        else if (ball.x > b.x + b.width) testX = b.x + b.width;
+                        if (ball.y < b.y) testY = b.y; 
+                        else if (ball.y > b.y + b.height) testY = b.y + b.height;
+
+                        let distX = ball.x - testX;
+                        let distY = ball.y - testY;
+                        let distance = Math.sqrt((distX * distX) + (distY * distY));
+
+                        if (distance <= ballRadius) {
+                            // 衝突処理（反転）
+                            if (Math.abs(distX) > Math.abs(distY)) ball.vx *= -1;
+                            else ball.vy *= -1;
+
+                            // HPを減らす
+                            b.hp--;
+                            if (b.hp <= 0) blocks.splice(i, 1);
+                            
+                            // 貫通防止のため少し押し出す処理が必要ですが、ここでは簡易化
+                            break;
+                        }
+                    }
+                });
+
+                // 全てのボールが戻ってきたらターン終了
+                if (activeBalls === 0) {
+                    state = 'aiming';
+                    level++;
+                    ballCount++; // 毎ターンボールが1つ増える
+                    spawnBlocks();
+                }
+            }
+        }
+
+        // 描画処理
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            // 照準線の描画
+            if (state === 'aiming' && isDragging) {
+                ctx.beginPath();
+                ctx.setLineDash([5, 5]);
+                ctx.moveTo(startX, startY);
+                // 画面端まで線を伸ばす計算
+                const angle = Math.atan2(aimY - startY, aimX - startX);
+                const lineLength = 1000;
+                ctx.lineTo(startX + Math.cos(angle) * lineLength, startY + Math.sin(angle) * lineLength);
+                ctx.strokeStyle = '#555';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // ブロックの描画
+            blocks.forEach(b => {
+                ctx.fillStyle = `hsl(${(b.hp * 10) % 360}, 80%, 60%)`;
+                ctx.fillRect(b.x, b.y, b.width, b.height);
+                
+                // 数字の描画
+                ctx.fillStyle = '#fff';
+                ctx.font = '20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(b.hp, b.x + b.width / 2, b.y + b.height / 2);
+            });
+
+            // ボールの描画
+            ctx.fillStyle = '#fff';
+            if (state === 'shooting') {
+                balls.forEach(ball => {
+                    if (ball.active) {
+                        ctx.beginPath();
+                        ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+            } else {
+                // 待機中のボール（下にまとめて描画）
+                ctx.beginPath();
+                ctx.arc(startX, startY, ballRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.font = '14px Arial';
+                ctx.fillText('x' + ballCount, startX, startY - 15);
+            }
+        }
+
+        // メインループ
+        function loop() {
+            update();
+            draw();
+            requestAnimationFrame(loop);
+        }
+        loop();
+
+    </script>
+</body>
+</html>
