@@ -2,113 +2,215 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Ballistic Final</title>
     <style>
-        html, body { margin: 0; padding: 0; width: 100%; height: 100%; background: #111; overflow: hidden; touch-action: none; user-select: none; font-family: sans-serif; }
-        /* Canvasを画面いっぱいに表示 */
-        #gameCanvas { display: block; width: 100vw; height: 100vh; }
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #111; overflow: hidden; touch-action: none; 
+            user-select: none; -webkit-user-select: none; font-family: sans-serif;
+        }
+        #gameCanvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;
+        }
         #ffBtn {
             position: absolute; bottom: 20px; right: 20px; width: 70px; height: 70px; 
             background: rgba(255,255,255,0.2); border-radius: 50%; color: white; 
             border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
             font-weight: bold; font-size: 16px; z-index: 10;
         }
+        #errorBox {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #fff; color: #d00; padding: 20px; box-sizing: border-box; 
+            z-index: 9999; display: none; overflow-y: auto;
+        }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     <div id="ffBtn">1x</div>
+    <div id="errorBox"></div>
 
     <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const ffBtn = document.getElementById('ffBtn');
-
-        let speeds = [1, 3, 10, 100], speedIdx = 0;
-        let score = 0, highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0;
-        let level = 1, ballCount = 1, extraBallsNextTurn = 0, balls = [], blocks = [], items = [], state = 'aiming';
-        let startX = 0, startY = 0, nextStartX = null, aimX = 0, aimY = 0, isDragging = false;
-        
-        // 高解像度対応のサイズ設定
-        function resize() {
-            const dpr = window.devicePixelRatio || 1;
-            canvas.width = window.innerWidth * dpr;
-            canvas.height = window.innerHeight * dpr;
-            ctx.scale(dpr, dpr);
-            // CSSサイズを基に計算
-            startY = window.innerHeight - 100;
-            if (state === 'aiming') startX = window.innerWidth / 2;
+        const errBox = document.getElementById('errorBox');
+        function showError(msg, err) {
+            errBox.style.display = 'block';
+            errBox.innerHTML += '<h3>' + msg + '</h3>';
+            if (err && err.stack) errBox.innerHTML += '<pre style="font-size:12px; color:#333; white-space:pre-wrap;">' + err.stack + '</pre><hr>';
         }
-        window.addEventListener('resize', resize);
-        resize();
 
-        function spawnBlocks() {
-            const blockWidth = (window.innerWidth - 4 * 8) / 7;
-            blocks.forEach(b => b.y += blockWidth + 4);
-            items.forEach(i => i.y += blockWidth + 4);
-            for (let i = 0; i < 7; i++) {
-                let x = 4 + i * (blockWidth + 4);
-                if (Math.random() > 0.8) items.push({ x, y: 90, w: blockWidth, h: blockWidth, active: true });
-                else if (Math.random() > 0.4) blocks.push({ x, y: 90, w: blockWidth, h: blockWidth, hp: level });
+        window.onerror = function(msg, url, line) {
+            showError('エラー: ' + msg + ' (行: ' + line + ')');
+            return true;
+        };
+
+        try {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const ffBtn = document.getElementById('ffBtn');
+
+            let speeds = [1, 3, 10, 100];
+            let speedIdx = 0;
+
+            let highScore = 0;
+            try { highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; } catch (e) {}
+
+            let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
+            let balls = [], blocks = [], items = [];
+            let state = 'aiming'; 
+            let startX = 0, startY = 0, nextStartX = null;
+            let aimX = 0, aimY = 0, isDragging = false;
+            
+            const ballRadius = 6;
+            const blockCols = 7;
+            const blockPadding = 4;
+
+            function resize() {
+                canvas.width = window.innerWidth || document.documentElement.clientWidth || 320;
+                canvas.height = window.innerHeight || document.documentElement.clientHeight || 480;
+                startY = canvas.height - 100;
+                if (state === 'aiming' && nextStartX === null) startX = canvas.width / 2;
             }
-        }
 
-        function update() {
-            if (state !== 'shooting') return;
-            for(let step = 0; step < speeds[speedIdx]; step++) {
-                let active = 0;
-                balls.forEach(b => {
-                    if (!b.active) { if (b.delay > 0) { b.delay--; active++; } else b.active = true; return; }
-                    b.x += b.vx; b.y += b.vy;
-                    if (b.x-6 < 0 || b.x+6 > window.innerWidth) b.vx *= -1;
-                    if (b.y-6 < 0) b.vy *= -1;
-                    if (b.vy > 0 && b.y >= startY) { b.active = false; b.y = startY; if (nextStartX === null) nextStartX = b.x; return; }
-                    active++;
-                    blocks.forEach(bl => {
-                        let tx = Math.max(bl.x, Math.min(b.x, bl.x+bl.w)), ty = Math.max(bl.y, Math.min(b.y, bl.y+bl.h));
-                        let dx = b.x-tx, dy = b.y-ty;
-                        if (dx*dx + dy*dy <= 36) {
-                            if (Math.abs(dx) > Math.abs(dy)) { b.vx *= -1; b.x = (dx>0)?tx+6:tx-6; }
-                            else { b.vy *= -1; b.y = (dy>0)?ty+6:ty-6; }
-                            bl.hp--; score++; if (bl.hp <= 0) bl.toRemove = true;
-                        }
-                    });
-                    blocks = blocks.filter(b => !b.toRemove);
-                });
-                if (active === 0) {
-                    state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
-                    if (nextStartX !== null) startX = nextStartX; spawnBlocks();
-                    if (score > highScore) { highScore = score; localStorage.setItem('ballisticHighScore', highScore); }
-                    break;
+            function resetGame() {
+                score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
+                blocks = []; items = []; nextStartX = null;
+                resize(); 
+                state = 'aiming';
+                spawnBlocks();
+            }
+
+            function spawnBlocks() {
+                const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
+                const blockHeight = blockWidth;
+                const startYPos = 90;
+
+                blocks.forEach(b => b.y += blockHeight + blockPadding);
+                items.forEach(i => i.y += blockHeight + blockPadding);
+
+                let isGameOver = false;
+                blocks.forEach(b => { if (b.y + b.height >= startY) isGameOver = true; });
+
+                if (isGameOver) {
+                    state = 'gameover';
+                    try {
+                        if (score > highScore) { highScore = score; localStorage.setItem('ballisticHighScore', highScore); }
+                    } catch(e) {}
+                    return;
+                }
+
+                let itemCol = Math.floor(Math.random() * blockCols);
+                for (let i = 0; i < blockCols; i++) {
+                    let x = blockPadding + i * (blockWidth + blockPadding);
+                    if (i === itemCol) {
+                        items.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, active: true });
+                    } else if (Math.random() > 0.4) {
+                        blocks.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, hp: level });
+                    }
                 }
             }
-        }
 
-        function draw() {
-            ctx.clearRect(0, 0, window.innerWidth, window.innerHeight);
-            ctx.fillStyle = '#fff'; ctx.font = '20px Arial';
-            ctx.fillText(`SCORE: ${score}  BEST: ${highScore}`, 20, 40);
-            ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(window.innerWidth, startY); ctx.stroke();
-            if (state === 'aiming' && isDragging) { ctx.beginPath(); ctx.setLineDash([5,5]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); ctx.stroke(); ctx.setLineDash([]); }
-            blocks.forEach(b => { ctx.fillStyle = '#4a90e2'; ctx.fillRect(b.x, b.y, b.w, b.h); ctx.fillStyle = '#fff'; ctx.textAlign='center'; ctx.fillText(b.hp, b.x+b.w/2, b.y+b.h/2+5); });
-            items.forEach(it => { if(it.active) { ctx.fillStyle = '#0f0'; ctx.fillRect(it.x, it.y, it.w, it.h); } });
-            balls.forEach(b => { if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, Math.PI*2); ctx.fill(); } });
-            update(); requestAnimationFrame(draw);
-        }
-
-        ffBtn.onclick = () => { speedIdx = (speedIdx + 1) % speeds.length; ffBtn.innerText = speeds[speedIdx] + 'x'; };
-        canvas.onmousedown = (e) => { isDragging = true; aimX = e.clientX; aimY = e.clientY; };
-        canvas.onmousemove = (e) => { if(isDragging) { aimX = e.clientX; aimY = e.clientY; } };
-        canvas.onmouseup = (e) => { 
-            if(isDragging) {
-                let dx = e.clientX - startX, dy = e.clientY - startY;
-                const angle = Math.atan2(dy < -10 ? dy : -10, dx), speed = 22;
-                balls = []; for(let i=0; i<ballCount; i++) balls.push({ x: startX, y: startY, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, active: false, delay: i*4 });
-                state = 'shooting'; isDragging = false;
+            function getTouchPos(e) {
+                if (e.changedTouches && e.changedTouches.length > 0) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+                return { x: e.clientX || 0, y: e.clientY || 0 };
             }
-        };
-        spawnBlocks(); draw();
+
+            ffBtn.addEventListener('click', () => {
+                speedIdx = (speedIdx + 1) % speeds.length;
+                ffBtn.innerText = speeds[speedIdx] + 'x';
+            });
+
+            function handleStart(e) {
+                if (e.cancelable) e.preventDefault();
+                if (state === 'gameover') { resetGame(); return; }
+                if (state !== 'aiming') return;
+                isDragging = true;
+                const pos = getTouchPos(e);
+                aimX = pos.x; aimY = pos.y;
+            }
+            function handleMove(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                const pos = getTouchPos(e);
+                aimX = pos.x; aimY = pos.y;
+            }
+            function handleEnd(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                isDragging = false;
+                state = 'shooting'; nextStartX = null;
+                let dx = aimX - startX, dy = aimY - startY;
+                const angle = Math.atan2(dy < -10 ? dy : -10, dx), speed = 22;
+                balls = [];
+                for (let i = 0; i < ballCount; i++) balls.push({ x: startX, y: startY, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, active: false, delay: i * 4 });
+            }
+
+            function update() {
+                if (state !== 'shooting') return;
+                for(let step = 0; step < speeds[speedIdx]; step++) {
+                    let activeBalls = 0;
+                    balls.forEach(ball => {
+                        if (!ball.active) {
+                            if (ball.delay > 0) { ball.delay--; activeBalls++; return; }
+                            else ball.active = true;
+                        }
+                        ball.x += ball.vx; ball.y += ball.vy;
+                        if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) { ball.vx *= -1; ball.x = (ball.x < ballRadius) ? ballRadius : canvas.width - ballRadius; }
+                        if (ball.y - ballRadius < 0) { ball.y = ballRadius; ball.vy *= -1; }
+                        if (ball.vy > 0 && ball.y >= startY) { ball.active = false; ball.y = startY; if (nextStartX === null) nextStartX = ball.x; return; }
+                        activeBalls++;
+                        
+                        items.forEach(it => {
+                            if (!it.active) return;
+                            if (ball.x >= it.x && ball.x <= it.x + it.width && ball.y >= it.y && ball.y <= it.y + it.height) { it.active = false; extraBallsNextTurn++; }
+                        });
+
+                        blocks.forEach(b => {
+                            let tx = Math.max(b.x, Math.min(ball.x, b.x + b.width)), ty = Math.max(b.y, Math.min(ball.y, b.y + b.height));
+                            let dx = ball.x - tx, dy = ball.y - ty;
+                            if (dx * dx + dy * dy <= ballRadius * ballRadius) {
+                                if (Math.abs(dx) > Math.abs(dy)) { ball.vx *= -1; ball.x = (dx > 0) ? tx + ballRadius : tx - ballRadius; }
+                                else { ball.vy *= -1; ball.y = (dy > 0) ? ty + ballRadius : ty - ballRadius; }
+                                b.hp--; score++; if (b.hp <= 0) b.toRemove = true;
+                            }
+                        });
+                        blocks = blocks.filter(b => !b.toRemove);
+                    });
+                    if (activeBalls === 0) {
+                        state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
+                        if (nextStartX !== null) startX = nextStartX; spawnBlocks(); break;
+                    }
+                }
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#fff'; ctx.fillText(`SCORE: ${score} | BEST: ${highScore}`, 15, 30);
+                ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY); ctx.stroke();
+                
+                // 【追加】Aiming中の照準線
+                if (state === 'aiming' && isDragging) {
+                    ctx.beginPath(); ctx.setLineDash([8,8]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); ctx.stroke(); ctx.setLineDash([]);
+                }
+                // 【追加】常時ボールを表示
+                if (state === 'aiming') { ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI*2); ctx.fill(); }
+
+                blocks.forEach(b => { ctx.fillStyle = '#4a90e2'; ctx.fillRect(b.x, b.y, b.width, b.height); ctx.fillStyle = '#fff'; ctx.fillText(b.hp, b.x+b.width/2, b.y+b.height/2); });
+                items.forEach(it => { if(it.active) { ctx.fillStyle = '#0f0'; ctx.fillRect(it.x, it.y, it.width, it.height); } });
+                balls.forEach(b => { if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, ballRadius, 0, Math.PI*2); ctx.fill(); } });
+                update(); requestAnimationFrame(draw);
+            }
+
+            canvas.addEventListener('touchstart', handleStart, {passive: false});
+            canvas.addEventListener('touchmove', handleMove, {passive: false});
+            canvas.addEventListener('touchend', handleEnd, {passive: false});
+            canvas.addEventListener('mousedown', handleStart);
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', handleEnd);
+            
+            spawnBlocks(); draw();
+        } catch(e) { showError('初期化エラー', e); }
     </script>
 </body>
 </html>
