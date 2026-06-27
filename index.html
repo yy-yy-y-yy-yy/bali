@@ -31,7 +31,6 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
-        // 【最重要】あらゆるエラーをキャッチして画面に表示する
         window.onerror = function(message, source, lineno, colno, error) {
             ctx.fillStyle = '#222';
             ctx.fillRect(0, 0, canvas.width || 300, canvas.height || 500);
@@ -39,13 +38,11 @@
             ctx.font = '16px Arial';
             ctx.textAlign = 'left';
             ctx.textBaseline = 'top';
-            ctx.fillText('エラーが発生しました:', 10, 30);
+            ctx.fillText('エラー:', 10, 30);
             ctx.fillText(message, 10, 60);
-            ctx.fillText('行: ' + lineno, 10, 90);
             return true;
         };
 
-        // ハイスコアの安全な取得
         let highScore = 0;
         try {
             highScore = localStorage.getItem('ballisticHighScore') || 0;
@@ -61,7 +58,6 @@
         const blockCols = 7;
         const blockPadding = 5;
 
-        // 確実な画面サイズ取得
         function resize() {
             const w = window.innerWidth || document.documentElement.clientWidth || 320;
             const h = window.innerHeight || document.documentElement.clientHeight || 480;
@@ -187,22 +183,27 @@
 
                 ball.x += ball.vx; ball.y += ball.vy;
 
+                // 左右の壁の反射
                 if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) {
                     ball.vx *= -1;
                     ball.x = ball.x - ballRadius < 0 ? ballRadius : canvas.width - ballRadius;
                 }
+                // 天井の反射
                 if (ball.y - ballRadius < 0) {
                     ball.vy *= -1; ball.y = ballRadius;
                 }
 
-                if (ball.y + ballRadius >= startY) {
-                    ball.active = false; ball.y = startY;
+                // 【修正箇所】床の判定：ボールが下に向かって落ちている(vy > 0)時だけ判定する
+                if (ball.vy > 0 && ball.y >= startY) {
+                    ball.active = false; 
+                    ball.y = startY;
                     if (nextStartX === null) nextStartX = ball.x;
                     ball.x = nextStartX;
                     return;
                 }
                 activeBalls++;
 
+                // アイテム取得判定
                 for (let i = items.length - 1; i >= 0; i--) {
                     let item = items[i];
                     if (!item.active) continue;
@@ -212,6 +213,7 @@
                     }
                 }
 
+                // ブロック破壊判定
                 for (let i = blocks.length - 1; i >= 0; i--) {
                     let b = blocks[i];
                     let testX = Math.max(b.x, Math.min(ball.x, b.x + b.width));
