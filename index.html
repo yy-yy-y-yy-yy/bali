@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <title>Ballistic Clone</title>
@@ -27,38 +27,52 @@
         const canvas = document.getElementById('gameCanvas');
         const ctx = canvas.getContext('2d');
 
-        function resize() {
-            canvas.width = window.innerWidth;
-            canvas.height = window.innerHeight;
+        // 【修正】Safariでのハイスコア保存エラー（セキュリティブロック）を回避
+        let highScore = 0;
+        try {
+            highScore = localStorage.getItem('ballisticHighScore') || 0;
+        } catch (e) {
+            console.warn('localStorage is blocked');
         }
-        window.addEventListener('resize', resize);
-        resize();
 
         // ゲームの基本状態
         let score = 0;
-        let highScore = localStorage.getItem('ballisticHighScore') || 0;
         let level = 1;
-        let ballCount = 1; // 初期ボール数
-        let extraBallsNextTurn = 0; // 次のターンで増えるボールの数
+        let ballCount = 1; 
+        let extraBallsNextTurn = 0; 
         
         let balls = [];
         let blocks = [];
-        let items = []; // ボール追加アイテム
+        let items = []; 
         
-        let state = 'aiming'; // 'aiming', 'shooting', 'gameover'
-        let startX = canvas.width / 2;
-        let startY = canvas.height - 50; // 床の位置
-        let nextStartX = null; // 次のターンの発射位置（最初に落ちたボールの位置）
+        let state = 'aiming'; 
+        let startX = 0;
+        let startY = 0; 
+        let nextStartX = null; 
         
-        let aimX = startX;
-        let aimY = startY - 100;
+        let aimX = 0;
+        let aimY = 0;
         let isDragging = false;
 
         const ballRadius = 6;
         const blockCols = 7;
         const blockPadding = 5;
 
-        // ゲームのリセット
+        // 【修正】起動時の画面サイズ取得エラーを防止
+        function resize() {
+            // サイズが0になるのを防ぐため、最低でも320x480を確保
+            canvas.width = window.innerWidth || 320;
+            canvas.height = window.innerHeight || 480;
+            
+            // 床（発射位置）の高さを画面下部に正しく設定
+            startY = canvas.height - 80; 
+            if (state === 'aiming' && nextStartX === null) {
+                startX = canvas.width / 2;
+            }
+        }
+        window.addEventListener('resize', resize);
+        resize(); // 初回実行
+
         function resetGame() {
             score = 0;
             level = 1;
@@ -66,56 +80,49 @@
             extraBallsNextTurn = 0;
             blocks = [];
             items = [];
-            startX = canvas.width / 2;
             nextStartX = null;
+            resize(); // リセット時にもう一度サイズを整える
             state = 'aiming';
             spawnBlocks();
         }
 
-        // ブロックとアイテムの生成
         function spawnBlocks() {
-            const blockWidth = (canvas.width - blockPadding * (blockCols + 1)) / blockCols;
+            // 【修正】ブロックサイズがマイナスにならないよう保護
+            const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
             const blockHeight = blockWidth;
-            const startYPos = 80; // スコア表示の下から開始
+            const startYPos = 80;
 
-            // 既存のブロックとアイテムを一段下げる
             blocks.forEach(b => b.y += blockHeight + blockPadding);
             items.forEach(i => i.y += blockHeight + blockPadding);
 
-            // ゲームオーバー判定（ブロックが床に到達したか）
+            // ゲームオーバー判定
             let isGameOver = false;
             blocks.forEach(b => {
-                if (b.y + b.height >= startY) {
-                    isGameOver = true;
-                }
+                if (b.y + b.height >= startY) isGameOver = true;
             });
 
             if (isGameOver) {
                 state = 'gameover';
-                if (score > highScore) {
-                    highScore = score;
-                    localStorage.setItem('ballisticHighScore', highScore);
-                }
+                try {
+                    if (score > highScore) {
+                        highScore = score;
+                        localStorage.setItem('ballisticHighScore', highScore);
+                    }
+                } catch(e) {}
                 return;
             }
 
-            // 新しい列を生成
-            // アイテムを配置する列をランダムに1つ決める
             let itemCol = Math.floor(Math.random() * blockCols);
-
             for (let i = 0; i < blockCols; i++) {
                 let x = blockPadding + i * (blockWidth + blockPadding);
-                
                 if (i === itemCol) {
-                    // ボール追加アイテムを生成
                     items.push({
                         x: x + blockWidth / 2,
                         y: startYPos + blockHeight / 2,
-                        radius: blockWidth / 3,
+                        radius: Math.max(2, blockWidth / 3), // 【修正】半径マイナスエラーを防止
                         active: true
                     });
                 } else if (Math.random() > 0.4) {
-                    // ブロックを生成（HPは現在のレベルと同じ）
                     blocks.push({
                         x: x,
                         y: startYPos,
@@ -127,7 +134,6 @@
             }
         }
 
-        // 入力処理
         function handleStart(e) {
             if (state === 'gameover') {
                 resetGame();
@@ -152,12 +158,8 @@
         function updateAim(e) {
             const clientX = e.touches ? e.touches[0].clientX : e.clientX;
             const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-            
-            // 指を置いた方向を直接狙う
             aimX = clientX;
             aimY = clientY;
-            
-            // 下方向（床より下）には撃てないように制限
             if (aimY > startY - 20) aimY = startY - 20; 
         }
 
@@ -168,18 +170,15 @@
         canvas.addEventListener('mousemove', handleMove);
         canvas.addEventListener('mouseup', handleEnd);
         
-        // スワイプによる画面スクロールを強制ブロック
         canvas.addEventListener('touchmove', function(e) {
             e.preventDefault();
         }, { passive: false });
 
-        // ボールの発射
         function shootBalls() {
             state = 'shooting';
             nextStartX = null;
-            
             const angle = Math.atan2(aimY - startY, aimX - startX);
-            const speed = 18; // ボールの速さ
+            const speed = 18;
             const vx = Math.cos(angle) * speed;
             const vy = Math.sin(angle) * speed;
 
@@ -191,33 +190,25 @@
                     vx: vx,
                     vy: vy,
                     active: false,
-                    delay: i * 4 // ボールの発射間隔
+                    delay: i * 4 
                 });
             }
         }
 
-        // 当たり判定と更新
         function update() {
             if (state !== 'shooting') return;
-            
             let activeBalls = 0;
 
             balls.forEach(ball => {
                 if (!ball.active) {
-                    if (ball.delay <= 0) {
-                        ball.active = true;
-                    } else {
-                        ball.delay--;
-                        activeBalls++;
-                    }
+                    if (ball.delay <= 0) ball.active = true;
+                    else { ball.delay--; activeBalls++; }
                     return;
                 }
 
-                // 移動
                 ball.x += ball.vx;
                 ball.y += ball.vy;
 
-                // 壁との反射
                 if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) {
                     ball.vx *= -1;
                     ball.x = ball.x - ballRadius < 0 ? ballRadius : canvas.width - ballRadius;
@@ -227,41 +218,30 @@
                     ball.y = ballRadius;
                 }
 
-                // 床に到達した時の処理
                 if (ball.y + ballRadius >= startY) {
                     ball.active = false;
                     ball.y = startY;
-                    
-                    // 最初に床に着いたボールの位置を次のターンの開始位置にする
-                    if (nextStartX === null) {
-                        nextStartX = ball.x;
-                    }
+                    if (nextStartX === null) nextStartX = ball.x;
                     ball.x = nextStartX;
                     return;
                 }
 
                 activeBalls++;
 
-                // アイテムとの当たり判定
                 for (let i = items.length - 1; i >= 0; i--) {
                     let item = items[i];
                     if (!item.active) continue;
-
                     let dx = ball.x - item.x;
                     let dy = ball.y - item.y;
-                    let distance = Math.sqrt(dx * dx + dy * dy);
-
-                    if (distance <= ballRadius + item.radius) {
-                        item.active = false; // アイテム取得
+                    if (Math.sqrt(dx * dx + dy * dy) <= ballRadius + item.radius) {
+                        item.active = false;
                         extraBallsNextTurn++;
                         items.splice(i, 1);
                     }
                 }
 
-                // ブロックとの当たり判定
                 for (let i = blocks.length - 1; i >= 0; i--) {
                     let b = blocks[i];
-                    
                     let testX = ball.x;
                     let testY = ball.y;
 
@@ -272,9 +252,130 @@
 
                     let distX = ball.x - testX;
                     let distY = ball.y - testY;
-                    let distance = Math.sqrt((distX * distX) + (distY * distY));
 
-                    if (distance <= ballRadius) {
-                        // 衝突処理（反転）
+                    if (Math.sqrt((distX * distX) + (distY * distY)) <= ballRadius) {
                         if (Math.abs(distX) > Math.abs(distY)) ball.vx *= -1;
                         else ball.vy *= -1;
+                        b.hp--;
+                        score++;
+                        if (b.hp <= 0) blocks.splice(i, 1);
+                        break;
+                    }
+                }
+            });
+
+            if (activeBalls === 0) {
+                state = 'aiming';
+                level++;
+                ballCount += extraBallsNextTurn;
+                extraBallsNextTurn = 0;
+                if (nextStartX !== null) startX = nextStartX;
+                spawnBlocks();
+            }
+        }
+
+        function draw() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+            ctx.fillStyle = '#fff';
+            ctx.font = '24px Arial';
+            ctx.textAlign = 'left';
+            ctx.fillText(`SCORE: ${score}`, 15, 40);
+            ctx.textAlign = 'right';
+            ctx.fillText(`BEST: ${highScore}`, canvas.width - 15, 40);
+
+            ctx.beginPath();
+            ctx.moveTo(0, startY);
+            ctx.lineTo(canvas.width, startY);
+            ctx.strokeStyle = '#444';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+
+            if (state === 'aiming' && isDragging) {
+                ctx.beginPath();
+                ctx.setLineDash([10, 10]);
+                ctx.moveTo(startX, startY);
+                const angle = Math.atan2(aimY - startY, aimX - startX);
+                const lineLength = 1000;
+                ctx.lineTo(startX + Math.cos(angle) * lineLength, startY + Math.sin(angle) * lineLength);
+                ctx.strokeStyle = '#888';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            blocks.forEach(b => {
+                ctx.fillStyle = `hsl(${(b.hp * 10 + 180) % 360}, 70%, 50%)`;
+                ctx.fillRect(b.x, b.y, b.width, b.height);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillText(b.hp, b.x + b.width / 2, b.y + b.height / 2);
+            });
+
+            items.forEach(item => {
+                ctx.beginPath();
+                ctx.arc(item.x, item.y, item.radius, 0, Math.PI * 2);
+                ctx.strokeStyle = '#0f0';
+                ctx.lineWidth = 3;
+                ctx.stroke();
+                ctx.beginPath();
+                ctx.arc(item.x, item.y, item.radius / 2, 0, Math.PI * 2);
+                ctx.fillStyle = '#0f0';
+                ctx.fill();
+            });
+
+            ctx.fillStyle = '#fff';
+            if (state === 'shooting') {
+                balls.forEach(ball => {
+                    if (ball.active) {
+                        ctx.beginPath();
+                        ctx.arc(ball.x, ball.y, ballRadius, 0, Math.PI * 2);
+                        ctx.fill();
+                    }
+                });
+            } else if (state === 'aiming') {
+                ctx.beginPath();
+                ctx.arc(startX, startY, ballRadius, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.font = '14px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('x' + ballCount, startX, startY - 15);
+            }
+
+            if (state === 'gameover') {
+                ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = '#fff';
+                ctx.font = 'bold 40px Arial';
+                ctx.textAlign = 'center';
+                ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                ctx.font = '20px Arial';
+                ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+            }
+        }
+
+        resetGame();
+
+        // 【修正】エラー発生時に画面に理由を表示する安全なループ
+        function loop() {
+            try {
+                update();
+                draw();
+                requestAnimationFrame(loop);
+            } catch (e) {
+                // エラー内容を画面に赤文字で表示
+                ctx.fillStyle = '#222';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.fillStyle = 'red';
+                ctx.font = '16px Arial';
+                ctx.textAlign = 'left';
+                ctx.fillText('Error: ' + e.message, 10, 50);
+            }
+        }
+        loop();
+
+    </script>
+</body>
+</html>
