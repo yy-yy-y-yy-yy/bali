@@ -2,99 +2,299 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Ballistic Final</title>
     <style>
-        body { margin: 0; background: #111; overflow: hidden; touch-action: none; font-family: sans-serif; }
-        #gameCanvas { display: block; width: 100vw; height: 100vh; }
+        html, body {
+            margin: 0; padding: 0; width: 100%; height: 100%; 
+            background-color: #111; overflow: hidden; touch-action: none; 
+            user-select: none; -webkit-user-select: none; font-family: sans-serif;
+        }
+        #gameCanvas {
+            position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: block;
+        }
         #ffBtn {
             position: absolute; bottom: 20px; right: 20px; width: 70px; height: 70px; 
-            background: #444; color: white; border-radius: 50%; display: flex; 
-            align-items: center; justify-content: center; font-weight: bold; z-index: 10; cursor: pointer;
+            background: rgba(255,255,255,0.2); border-radius: 50%; color: white; 
+            border: 2px solid #fff; display: flex; align-items: center; justify-content: center;
+            font-weight: bold; font-size: 16px; z-index: 10; cursor: pointer;
+        }
+        #errorBox {
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%; 
+            background: #fff; color: #d00; padding: 20px; box-sizing: border-box; 
+            z-index: 9999; display: none; overflow-y: auto;
         }
     </style>
 </head>
 <body>
     <canvas id="gameCanvas"></canvas>
     <div id="ffBtn">1x</div>
+    <div id="errorBox"></div>
 
     <script>
-        const canvas = document.getElementById('gameCanvas');
-        const ctx = canvas.getContext('2d');
-        const ffBtn = document.getElementById('ffBtn');
-
-        let speeds = [1, 3, 10, 100, 10000], sIdx = 0;
-        let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
-        let balls = [], blocks = [], state = 'aiming';
-        let startX = window.innerWidth/2, startY = window.innerHeight-100, aimX = 0, aimY = 0, isDragging = false;
-        
-        function spawnBlocks() {
-            let w = (window.innerWidth - 30) / 7;
-            blocks.forEach(b => b.y += w + 4);
-            for(let i=0; i<7; i++) {
-                if(Math.random() > 0.85) blocks.push({x: i*(w+4)+4, y: 90, w: w, h: w, hp: level, isItem: true});
-                else if(Math.random() > 0.4) blocks.push({x: i*(w+4)+4, y: 90, w: w, h: w, hp: level, isItem: false});
-            }
+        const errBox = document.getElementById('errorBox');
+        function showError(msg, err) {
+            errBox.style.display = 'block';
+            errBox.innerHTML += '<h3>' + msg + '</h3>';
+            if (err && err.stack) errBox.innerHTML += '<pre style="font-size:12px; color:#333; white-space:pre-wrap;">' + err.stack + '</pre><hr>';
         }
 
-        function update() {
-            if(state !== 'shooting') return;
-            for(let step=0; step<speeds[sIdx]; step++) {
-                let active = 0;
-                balls.forEach(b => {
-                    if(!b.active) { if(b.delay>0) b.delay--; else b.active = true; return; }
-                    b.x += b.vx; b.y += b.vy;
-                    if(b.x<6 || b.x>window.innerWidth-6) b.vx *= -1;
-                    if(b.y<6) b.vy *= -1;
-                    if(b.y > startY) { b.active = false; b.y = startY; return; }
-                    active++;
-                    blocks.forEach(bl => {
-                        let tx = Math.max(bl.x, Math.min(b.x, bl.x+bl.w)), ty = Math.max(bl.y, Math.min(b.y, bl.y+bl.h));
-                        if((b.x-tx)**2 + (b.y-ty)**2 <= 36) {
-                            if(Math.abs(b.x-tx) > Math.abs(b.y-ty)) { b.vx *= -1; b.x += (b.x-tx > 0 ? 2 : -2); } 
-                            else { b.vy *= -1; b.y += (b.y-ty > 0 ? 2 : -2); }
-                            if(!bl.isItem) { bl.hp--; score++; if(bl.hp<=0) bl.dead = true; } else { bl.dead = true; extraBallsNextTurn++; }
-                        }
-                    });
-                    blocks = blocks.filter(b => !b.dead);
-                });
-                if(active === 0) { state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0; spawnBlocks(); break; }
-            }
-        }
+        window.onerror = function(msg, url, line) {
+            showError('エラー: ' + msg + ' (行: ' + line + ')');
+            return true;
+        };
 
-        function draw() {
-            ctx.clearRect(0, 0, canvas.width, canvas.height);
-            ctx.fillStyle = '#fff'; ctx.fillText('SCORE: '+score, 20, 30);
-            ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY); ctx.stroke();
+        try {
+            const canvas = document.getElementById('gameCanvas');
+            const ctx = canvas.getContext('2d');
+            const ffBtn = document.getElementById('ffBtn');
+
+            let speeds = [1, 3, 10, 100, 10000];
+            let speedIdx = 0;
+
+            let highScore = 0;
+            try { highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; } catch (e) {}
+
+            let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
+            let balls = [], blocks = [], items = [];
+            let state = 'aiming'; 
+            let startX = 0, startY = 0, nextStartX = null;
+            let aimX = 0, aimY = 0, isDragging = false;
             
-            if(state === 'aiming') {
-                if(isDragging) { ctx.beginPath(); ctx.setLineDash([5,5]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); ctx.stroke(); ctx.setLineDash([]); }
-                ctx.beginPath(); ctx.arc(startX, startY, 6, 0, Math.PI*2); ctx.fill();
+            const ballRadius = 6;
+            const blockCols = 7;
+            const blockPadding = 4;
+
+            function resize() {
+                canvas.width = window.innerWidth || document.documentElement.clientWidth || 320;
+                canvas.height = window.innerHeight || document.documentElement.clientHeight || 480;
+                startY = canvas.height - 100;
+                if (state === 'aiming' && nextStartX === null) startX = canvas.width / 2;
             }
 
-            blocks.forEach(b => { 
-                let ratio = Math.min(b.hp / (level + 2), 1);
-                ctx.fillStyle = b.isItem ? '#0f0' : `hsl(${220 - (ratio * 220)}, 80%, 50%)`;
-                ctx.fillRect(b.x, b.y, b.w, b.h); 
-                if(!b.isItem) { ctx.fillStyle='#fff'; ctx.textAlign='center'; ctx.fillText(b.hp, b.x+b.w/2, b.y+b.h/2); }
+            function resetGame() {
+                score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
+                blocks = []; items = []; nextStartX = null;
+                resize(); 
+                state = 'aiming';
+                spawnBlocks();
+            }
+
+            function spawnBlocks() {
+                const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
+                const blockHeight = blockWidth;
+                const startYPos = 90;
+
+                blocks.forEach(b => b.y += blockHeight + blockPadding);
+                items.forEach(i => i.y += blockHeight + blockPadding);
+
+                let isGameOver = false;
+                blocks.forEach(b => { if (b.y + b.height >= startY) isGameOver = true; });
+
+                if (isGameOver) {
+                    state = 'gameover';
+                    try {
+                        if (score > highScore) { highScore = score; localStorage.setItem('ballisticHighScore', highScore); }
+                    } catch(e) {}
+                    return;
+                }
+
+                let itemCol = Math.floor(Math.random() * blockCols);
+                for (let i = 0; i < blockCols; i++) {
+                    let x = blockPadding + i * (blockWidth + blockPadding);
+                    if (i === itemCol) {
+                        items.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, active: true });
+                    } else if (Math.random() > 0.4) {
+                        blocks.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, hp: level });
+                    }
+                }
+            }
+
+            function getTouchPos(e) {
+                if (e.changedTouches && e.changedTouches.length > 0) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+                return { x: e.clientX || 0, y: e.clientY || 0 };
+            }
+
+            ffBtn.addEventListener('click', () => {
+                speedIdx = (speedIdx + 1) % speeds.length;
+                ffBtn.innerText = speeds[speedIdx] + 'x';
             });
-            balls.forEach(b => { if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, 6, 0, Math.PI*2); ctx.fill(); } });
-            
-            update();
-            requestAnimationFrame(draw);
-        }
 
-        ffBtn.onclick = () => { sIdx = (sIdx+1)%speeds.length; ffBtn.innerText = speeds[sIdx]+'x'; };
-        window.addEventListener('touchstart', (e) => { isDragging = true; aimX = e.touches[0].clientX; aimY = e.touches[0].clientY; }, {passive: false});
-        window.addEventListener('touchmove', (e) => { aimX = e.touches[0].clientX; aimY = e.touches[0].clientY; }, {passive: false});
-        window.addEventListener('touchend', (e) => { 
-            let dx = aimX-startX, dy = aimY-startY;
-            let ang = Math.atan2(dy<-10?dy:-10, dx);
-            balls = []; for(let i=0; i<ballCount; i++) balls.push({x:startX, y:startY, vx:Math.cos(ang)*10, vy:Math.sin(ang)*10, active:false, delay:i*4});
-            state = 'shooting'; isDragging = false;
-        });
-        
-        spawnBlocks(); draw();
+            function handleStart(e) {
+                if (e.cancelable) e.preventDefault();
+                if (state === 'gameover') { resetGame(); return; }
+                if (state !== 'aiming') return;
+                isDragging = true;
+                const pos = getTouchPos(e);
+                aimX = pos.x; aimY = pos.y;
+            }
+            function handleMove(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                const pos = getTouchPos(e);
+                aimX = pos.x; aimY = pos.y;
+            }
+            function handleEnd(e) {
+                if (e.cancelable) e.preventDefault();
+                if (!isDragging || state !== 'aiming') return;
+                isDragging = false;
+                state = 'shooting'; nextStartX = null;
+                let dx = aimX - startX, dy = aimY - startY;
+                const angle = Math.atan2(dy < -10 ? dy : -10, dx);
+                
+                const speed = 4.4; 
+                balls = [];
+                for (let i = 0; i < ballCount; i++) {
+                    balls.push({ x: startX, y: startY, vx: Math.cos(angle) * speed, vy: Math.sin(angle) * speed, active: false, delay: i * 20 });
+                }
+            }
+
+            function update() {
+                if (state !== 'shooting') return;
+                
+                let totalSteps = speeds[speedIdx] * 5; 
+                for(let step = 0; step < totalSteps; step++) {
+                    let activeBalls = 0;
+                    balls.forEach(ball => {
+                        if (!ball.active) {
+                            if (ball.delay > 0) { ball.delay--; activeBalls++; return; }
+                            else ball.active = true;
+                        }
+                        
+                        ball.x += ball.vx; 
+                        ball.y += ball.vy;
+                        
+                        if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) { 
+                            ball.vx *= -1; 
+                            ball.x = (ball.x < ballRadius) ? ballRadius : canvas.width - ballRadius; 
+                        }
+                        if (ball.y - ballRadius < 0) { 
+                            ball.y = ballRadius; ball.vy *= -1; 
+                        }
+                        if (ball.vy > 0 && ball.y >= startY) { 
+                            ball.active = false; ball.y = startY; 
+                            if (nextStartX === null) nextStartX = ball.x; 
+                            return; 
+                        }
+                        activeBalls++;
+                        
+                        items.forEach(it => {
+                            if (!it.active) return;
+                            let tx = Math.max(it.x, Math.min(ball.x, it.x + it.width));
+                            let ty = Math.max(it.y, Math.min(ball.y, it.y + it.height));
+                            let dx = ball.x - tx, dy = ball.y - ty;
+                            if (dx * dx + dy * dy <= ballRadius * ballRadius) {
+                                it.active = false; extraBallsNextTurn++;
+                            }
+                        });
+
+                        for (let i = 0; i < blocks.length; i++) {
+                            let b = blocks[i];
+                            let tx = Math.max(b.x, Math.min(ball.x, b.x + b.width));
+                            let ty = Math.max(b.y, Math.min(ball.y, b.y + b.height));
+                            let dx = ball.x - tx, dy = ball.y - ty;
+                            
+                            if (dx * dx + dy * dy <= ballRadius * ballRadius) {
+                                if (dx === 0 && dy === 0) {
+                                    ball.vy *= -1; ball.y -= ballRadius;
+                                }
+                                else if (Math.abs(dx) > Math.abs(dy)) { 
+                                    ball.vx *= -1; 
+                                    ball.x = tx + (dx > 0 ? ballRadius : -ballRadius); 
+                                } else { 
+                                    ball.vy *= -1; 
+                                    ball.y = ty + (dy > 0 ? ballRadius : -ballRadius); 
+                                }
+                                b.hp--; score++; 
+                                if (b.hp <= 0) b.toRemove = true;
+                                break; 
+                            }
+                        }
+                        blocks = blocks.filter(b => !b.toRemove);
+                    });
+                    
+                    if (activeBalls === 0) {
+                        state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
+                        if (nextStartX !== null) startX = nextStartX; spawnBlocks(); break;
+                    }
+                }
+            }
+
+            function draw() {
+                ctx.clearRect(0, 0, canvas.width, canvas.height);
+                
+                // 【変更】スコア、BEST、BALLSを画面上部に綺麗に配置
+                ctx.fillStyle = '#fff'; 
+                ctx.font = 'bold 20px Arial';
+                ctx.textAlign = 'left';
+                ctx.textBaseline = 'top';
+                ctx.fillText(`SCORE: ${score}`, 15, 20);
+                ctx.fillText(`BEST: ${highScore}`, 15, 45);
+                
+                ctx.textAlign = 'right';
+                ctx.fillText(`BALLS: ${ballCount}`, canvas.width - 15, 20);
+                
+                ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY); ctx.strokeStyle = '#555'; ctx.stroke();
+                
+                if (state === 'aiming') {
+                    if (isDragging) {
+                        ctx.beginPath(); ctx.setLineDash([8,8]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); 
+                        ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+                    }
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI*2); ctx.fill();
+                    
+                    // 【追加】待機中のボールのすぐ下にも弾の数を表示
+                    ctx.font = 'bold 18px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText('x' + ballCount, startX, startY + 25);
+                }
+
+                ctx.textBaseline = 'middle';
+                blocks.forEach(b => { 
+                    let ratio = Math.max(0, Math.min(1, b.hp / (level + 2))); 
+                    let hue = ratio * 220;
+                    ctx.fillStyle = `hsl(${hue}, 80%, 55%)`; 
+                    ctx.fillRect(b.x, b.y, b.width, b.height); 
+                    
+                    ctx.fillStyle = '#fff'; 
+                    ctx.font = 'bold 22px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(b.hp, b.x + b.width/2, b.y + b.height/2); 
+                });
+                
+                items.forEach(it => { 
+                    if(it.active) { ctx.fillStyle = '#0f0'; ctx.fillRect(it.x, it.y, it.width, it.height); } 
+                });
+                
+                ctx.fillStyle = '#fff';
+                balls.forEach(b => { 
+                    if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, ballRadius, 0, Math.PI*2); ctx.fill(); } 
+                });
+                
+                if (state === 'gameover') {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff'; 
+                    ctx.font = 'bold 45px Arial';
+                    ctx.textAlign = 'center'; 
+                    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                    ctx.font = '20px Arial'; 
+                    ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+                }
+
+                update(); requestAnimationFrame(draw);
+            }
+
+            canvas.addEventListener('touchstart', handleStart, {passive: false});
+            canvas.addEventListener('touchmove', handleMove, {passive: false});
+            canvas.addEventListener('touchend', handleEnd, {passive: false});
+            canvas.addEventListener('mousedown', handleStart);
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', handleEnd);
+            
+            spawnBlocks(); draw();
+        } catch(e) { showError('初期化エラー', e); }
     </script>
 </body>
 </html>
