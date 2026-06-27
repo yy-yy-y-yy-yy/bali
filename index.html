@@ -63,25 +63,12 @@
                     if (b.y-ballRadius < 0) { b.vy *= -1; b.y = ballRadius; }
                     if (b.vy > 0 && b.y >= startY) { b.active = false; b.y = startY; if (nextStartX === null) nextStartX = b.x; return; }
                     active++;
-
-                    // 【核心修正】ブロックの辺に対する正確な反射判定
                     blocks.forEach(bl => {
-                        let nearestX = Math.max(bl.x, Math.min(b.x, bl.x + bl.w));
-                        let nearestY = Math.max(bl.y, Math.min(b.y, bl.y + bl.h));
-                        let dx = b.x - nearestX, dy = b.y - nearestY;
-                        
+                        let tx = Math.max(bl.x, Math.min(b.x, bl.x + bl.w)), ty = Math.max(bl.y, Math.min(b.y, bl.y + bl.h));
+                        let dx = b.x-tx, dy = b.y-ty;
                         if (dx*dx + dy*dy <= ballRadius*ballRadius) {
-                            // どの辺に当たったか判定
-                            let overlapX = ballRadius - Math.abs(dx);
-                            let overlapY = ballRadius - Math.abs(dy);
-                            
-                            if (overlapX < overlapY) {
-                                b.vx *= -1;
-                                b.x += (dx > 0) ? overlapX : -overlapX;
-                            } else {
-                                b.vy *= -1;
-                                b.y += (dy > 0) ? overlapY : -overlapY;
-                            }
+                            if (Math.abs(dx) > Math.abs(dy)) { b.vx *= -1; b.x = (dx > 0) ? tx + ballRadius : tx - ballRadius; }
+                            else { b.vy *= -1; b.y = (dy > 0) ? ty + ballRadius : ty - ballRadius; }
                             bl.hp--; score++; if (bl.hp <= 0) bl.toRemove = true;
                         }
                     });
@@ -114,14 +101,25 @@
             });
             items.forEach(it => { if(it.active) { ctx.fillStyle = '#0f0'; ctx.fillRect(it.x, it.y, it.w, it.h); } });
             balls.forEach(b => { if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, ballRadius, 0, Math.PI*2); ctx.fill(); } });
-            
             update(); requestAnimationFrame(draw);
         }
 
         ffBtn.onclick = () => { speedIdx = (speedIdx + 1) % speeds.length; ffBtn.innerText = speeds[speedIdx] + 'x'; };
+        
+        // 操作イベント（以前の安定していた書き方に準拠）
         canvas.addEventListener('touchstart', (e) => { isDragging = true; aimX = e.touches[0].clientX; aimY = e.touches[0].clientY; });
         canvas.addEventListener('touchmove', (e) => { aimX = e.touches[0].clientX; aimY = e.touches[0].clientY; });
         canvas.addEventListener('touchend', (e) => { 
+            if(isDragging) {
+                let dx = aimX - startX, dy = aimY - startY;
+                const angle = Math.atan2(dy < -10 ? dy : -10, dx), speed = 22;
+                balls = []; for(let i=0; i<ballCount; i++) balls.push({ x: startX, y: startY, vx: Math.cos(angle)*speed, vy: Math.sin(angle)*speed, active: false, delay: i*4 });
+                state = 'shooting'; isDragging = false;
+            }
+        });
+        canvas.addEventListener('mousedown', (e) => { isDragging = true; aimX = e.clientX; aimY = e.clientY; });
+        canvas.addEventListener('mousemove', (e) => { if(isDragging) { aimX = e.clientX; aimY = e.clientY; } });
+        canvas.addEventListener('mouseup', (e) => { 
             if(isDragging) {
                 let dx = aimX - startX, dy = aimY - startY;
                 const angle = Math.atan2(dy < -10 ? dy : -10, dx), speed = 22;
