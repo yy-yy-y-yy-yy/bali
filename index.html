@@ -72,21 +72,22 @@
             const hardBtn = document.getElementById('hardBtn');
             const sizeBtn = document.getElementById('sizeBtn');
 
-            // スピード倍率
             let speeds = [1, 3, 10, 100, 10000];
             let speedIdx = 0;
-
-            // 硬さ倍率
             let hardMax = 1;
 
-            // サイズ（難易度）設定
             const sizeLabels = ['S', 'M', 'L', 'XL'];
             const sizeValues = [6, 9, 12, 16]; 
             let sizeIdx = 0;
             let ballRadius = sizeValues[sizeIdx];
 
+            // 【追加】ハイスコアに加えて、前回のスコア(LAST)も取得
             let highScore = 0;
-            try { highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; } catch (e) {}
+            let lastScore = 0;
+            try { 
+                highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; 
+                lastScore = parseInt(localStorage.getItem('ballisticLastScore')) || 0; 
+            } catch (e) {}
 
             let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
             let balls = [], blocks = [], items = [];
@@ -126,7 +127,14 @@
                 if (isGameOver) {
                     state = 'gameover';
                     try {
-                        if (score > highScore) { highScore = score; localStorage.setItem('ballisticHighScore', highScore); }
+                        // 【追加】ゲームオーバー時に今回のスコアをLASTとして保存
+                        lastScore = score;
+                        localStorage.setItem('ballisticLastScore', lastScore);
+                        
+                        if (score > highScore) { 
+                            highScore = score; 
+                            localStorage.setItem('ballisticHighScore', highScore); 
+                        }
                     } catch(e) {}
                     return;
                 }
@@ -149,21 +157,18 @@
                 return { x: e.clientX || 0, y: e.clientY || 0 };
             }
 
-            // スピードボタン
             ffBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 speedIdx = (speedIdx + 1) % speeds.length;
                 ffBtn.innerText = speeds[speedIdx] + 'x';
             });
 
-            // 硬さボタン
             hardBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 hardMax = (hardMax % 4) + 1; 
                 hardBtn.innerText = 'Hp: ' + hardMax + 'x';
             });
 
-            // サイズボタン
             sizeBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (state === 'shooting') return; 
@@ -216,7 +221,6 @@
                         ball.x += ball.vx; 
                         ball.y += ball.vy;
                         
-                        // 壁の反射（ballRadius連動）
                         if (ball.x - ballRadius < 0 || ball.x + ballRadius > canvas.width) { 
                             ball.vx *= -1; 
                             ball.x = (ball.x < ballRadius) ? ballRadius : canvas.width - ballRadius; 
@@ -231,7 +235,6 @@
                         }
                         activeBalls++;
                         
-                        // アイテム取得判定
                         items.forEach(it => {
                             if (!it.active) return;
                             let tx = Math.max(it.x, Math.min(ball.x, it.x + it.width));
@@ -242,7 +245,6 @@
                             }
                         });
 
-                        // ブロックの当たり判定（めり込み防止）
                         for (let i = 0; i < blocks.length; i++) {
                             let b = blocks[i];
                             let tx = Math.max(b.x, Math.min(ball.x, b.x + b.width));
@@ -278,20 +280,23 @@
             function draw() {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // 上部のステータス表示
+                // 【変更】テキストのレイアウト変更
                 ctx.fillStyle = '#fff'; 
                 ctx.font = 'bold 20px Arial';
+                
+                // 左上：LAST と BEST
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'top';
-                ctx.fillText(`SCORE: ${score}`, 15, 20);
+                ctx.fillText(`LAST: ${lastScore}`, 15, 20);
                 ctx.fillText(`BEST: ${highScore}`, 15, 45);
                 
+                // 右上：SCORE と BALLS
                 ctx.textAlign = 'right';
-                ctx.fillText(`BALLS: ${ballCount}`, canvas.width - 15, 20);
+                ctx.fillText(`SCORE: ${score}`, canvas.width - 15, 20);
+                ctx.fillText(`BALLS: ${ballCount}`, canvas.width - 15, 45);
                 
                 ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY); ctx.strokeStyle = '#555'; ctx.stroke();
                 
-                // 待機中のボールと照準線
                 if (state === 'aiming') {
                     if (isDragging) {
                         ctx.beginPath(); ctx.setLineDash([8,8]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); 
