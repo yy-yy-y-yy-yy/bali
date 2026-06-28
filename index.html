@@ -36,7 +36,7 @@
             font-weight: bold; font-size: 16px; z-index: 10; cursor: pointer;
         }
 
-        /* 【新機能】UndoとBombボタン */
+        /* 必殺技＆Undoボタン */
         #undoBtn {
             position: absolute; bottom: 100px; left: 20px; width: 60px; height: 60px; 
             background: rgba(255,255,255,0.2); border-radius: 50%; color: white; 
@@ -65,7 +65,7 @@
     <div id="ffBtn">1x</div>
     
     <div id="undoBtn">⟲</div>
-    <div id="bombBtn">💣 1</div>
+    <div id="bombBtn">💣 3</div>
     
     <div id="errorBox"></div>
 
@@ -113,12 +113,11 @@
             let startX = 0, startY = 0, nextStartX = null;
             let aimX = 0, aimY = 0, isDragging = false;
             
-            // 【新機能】ボムとUndo用変数
-            let bombCount = 1;
-            let lastBombScore = 0; // ボム追加計算用スコア
-            let flashAlpha = 0; // 画面フラッシュ演出
-            let turnStartState = null; // 現在のターンの初期状態
-            let previousTurnState = null; // 1手前の状態（Undo用）
+            let bombCount = 3;
+            let nextBombScore = 10000; 
+            let flashAlpha = 0; 
+            let turnStartState = null; 
+            let previousTurnState = null; 
             
             const blockCols = 7;
             const blockPadding = 4;
@@ -130,10 +129,10 @@
                 if (state === 'aiming' && nextStartX === null) startX = canvas.width / 2;
             }
 
-            // 【追加】状態を保存・復元する関数
             function createSnapshot() {
                 return {
-                    score, level, ballCount, startX, startY, bombCount, lastBombScore,
+                    score, level, ballCount, startX, startY, 
+                    bombCount, nextBombScore,
                     blocks: blocks.map(b => ({...b})),
                     items: items.map(i => ({...i}))
                 };
@@ -142,7 +141,7 @@
             function restoreSnapshot(snap) {
                 score = snap.score; level = snap.level; ballCount = snap.ballCount;
                 startX = snap.startX; startY = snap.startY; 
-                bombCount = snap.bombCount; lastBombScore = snap.lastBombScore;
+                bombCount = snap.bombCount; nextBombScore = snap.nextBombScore;
                 blocks = snap.blocks.map(b => ({...b}));
                 items = snap.items.map(i => ({...i}));
                 bombBtn.innerText = '💣 ' + bombCount;
@@ -155,7 +154,7 @@
 
             function resetGame() {
                 score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
-                bombCount = 1; lastBombScore = 0;
+                bombCount = 3; nextBombScore = 10000; 
                 blocks = []; items = []; nextStartX = null;
                 resize(); 
                 state = 'aiming';
@@ -194,9 +193,7 @@
                 for (let i = 0; i < blockCols; i++) {
                     let x = blockPadding + i * (blockWidth + blockPadding);
                     if (i === itemCol) {
-                        // 【変更】10%の確率で「赤いボムアイテム」が出現
-                        let type = Math.random() < 0.1 ? 'bomb' : 'ball';
-                        items.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, active: true, type: type });
+                        items.push({ x: x, y: startYPos, width: blockWidth, height: blockHeight, active: true });
                     } else if (Math.random() > 0.4) {
                         let multiplier = Math.floor(Math.random() * hardMax) + 1; 
                         let blockHp = level * multiplier;
@@ -210,7 +207,6 @@
                 return { x: e.clientX || 0, y: e.clientY || 0 };
             }
 
-            // --- 各種ボタンイベント ---
             ffBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 speedIdx = (speedIdx + 1) % speeds.length;
@@ -231,18 +227,15 @@
                 ballRadius = sizeValues[sizeIdx];
             });
 
-            // 【追加】Undo（1手戻る）
             undoBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                // 照準中またはゲームオーバー時のみ、かつ1手前の記録がある場合のみ有効
                 if ((state !== 'aiming' && state !== 'gameover') || !previousTurnState) return;
                 restoreSnapshot(previousTurnState);
-                turnStartState = createSnapshot(); // 連続Undo防止
+                turnStartState = createSnapshot(); 
                 previousTurnState = null;
-                state = 'aiming'; // ゲームオーバーからでも復活
+                state = 'aiming'; 
             });
 
-            // 【追加】ボム発動（下3段吹き飛ばし）
             bombBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
                 if (state !== 'aiming' || bombCount <= 0 || blocks.length === 0) return;
@@ -254,11 +247,9 @@
                 const rowHeight = blockWidth + blockPadding;
                 const maxY = blocks.reduce((max, b) => Math.max(max, b.y), 0);
                 
-                // 一番下のブロックから約3段分（2.5段分の高さ）より下にあるものを全削除
                 const threshold = maxY - rowHeight * 2.5; 
                 blocks = blocks.filter(b => b.y < threshold);
                 
-                // 画面フラッシュ演出を発動
                 flashAlpha = 1.0;
             });
 
@@ -328,13 +319,7 @@
                             let dx = ball.x - tx, dy = ball.y - ty;
                             if (dx * dx + dy * dy <= ballRadius * ballRadius) {
                                 it.active = false; 
-                                // 【変更】アイテムの種類によって効果を分ける
-                                if (it.type === 'bomb') {
-                                    bombCount++;
-                                    bombBtn.innerText = '💣 ' + bombCount;
-                                } else {
-                                    extraBallsNextTurn++;
-                                }
+                                extraBallsNextTurn++;
                             }
                         });
 
@@ -357,10 +342,9 @@
                                 }
                                 b.hp--; score++; 
                                 
-                                // 【追加】スコアが500増えるごとにボムを追加
-                                if (score - lastBombScore >= 500) {
+                                if (score >= nextBombScore) {
                                     bombCount++;
-                                    lastBombScore = score;
+                                    nextBombScore *= 2;
                                     bombBtn.innerText = '💣 ' + bombCount;
                                 }
 
@@ -371,13 +355,12 @@
                         blocks = blocks.filter(b => !b.toRemove);
                     });
                     
-                    // ターン終了処理
                     if (activeBalls === 0) {
                         state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
                         if (nextStartX !== null) startX = nextStartX; 
                         
                         spawnBlocks(); 
-                        backupCurrentTurn(); // 【追加】ターンの状態を保存（Undoのため）
+                        backupCurrentTurn(); 
                         break;
                     }
                 }
@@ -386,7 +369,28 @@
             function draw() {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // ボタンの有効/無効を透明度で表現
+                // 【追加】背景グリッドの描画 (UIエリアを避けて y=90 付近からスタート)
+                const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
+                const cellSize = blockWidth + blockPadding;
+                const gridStartY = 90 - blockPadding / 2;
+                const gridEndX = blockPadding / 2 + blockCols * cellSize;
+
+                ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
+                ctx.lineWidth = 1;
+                ctx.beginPath();
+                // 縦線
+                for (let i = 0; i <= blockCols; i++) {
+                    let x = blockPadding / 2 + i * cellSize;
+                    ctx.moveTo(x, gridStartY);
+                    ctx.lineTo(x, startY);
+                }
+                // 横線
+                for (let y = gridStartY; y <= startY; y += cellSize) {
+                    ctx.moveTo(blockPadding / 2, y);
+                    ctx.lineTo(gridEndX, y);
+                }
+                ctx.stroke();
+
                 undoBtn.style.opacity = ((state === 'aiming' || state === 'gameover') && previousTurnState) ? '1' : '0.3';
                 bombBtn.style.opacity = (state === 'aiming' && bombCount > 0) ? '1' : '0.3';
 
@@ -400,4 +404,76 @@
                 
                 ctx.textAlign = 'right';
                 ctx.fillText(`SCORE: ${score}`, canvas.width - 15, 20);
-                ctx.fillText(`BALLS: ${ball
+                ctx.fillText(`BALLS: ${ballCount}`, canvas.width - 15, 45);
+                
+                ctx.beginPath(); ctx.moveTo(0, startY); ctx.lineTo(canvas.width, startY); ctx.strokeStyle = '#555'; ctx.stroke();
+                
+                if (state === 'aiming') {
+                    if (isDragging) {
+                        ctx.beginPath(); ctx.setLineDash([8,8]); ctx.moveTo(startX, startY); ctx.lineTo(aimX, aimY); 
+                        ctx.strokeStyle = '#aaa'; ctx.lineWidth = 2; ctx.stroke(); ctx.setLineDash([]);
+                    }
+                    ctx.fillStyle = '#fff';
+                    ctx.beginPath(); ctx.arc(startX, startY, ballRadius, 0, Math.PI*2); ctx.fill();
+                }
+
+                ctx.textBaseline = 'middle';
+                blocks.forEach(b => { 
+                    let maxExpectedHp = level * hardMax;
+                    let ratio = Math.max(0, Math.min(1, b.hp / (maxExpectedHp + 2))); 
+                    let hue = ratio * 220;
+                    ctx.fillStyle = `hsl(${hue}, 80%, 55%)`; 
+                    ctx.fillRect(b.x, b.y, b.width, b.height); 
+                    
+                    ctx.fillStyle = '#fff'; 
+                    ctx.font = 'bold 22px Arial';
+                    ctx.textAlign = 'center';
+                    ctx.fillText(b.hp, b.x + b.width/2, b.y + b.height/2); 
+                });
+                
+                items.forEach(it => { 
+                    if(it.active) { 
+                        ctx.fillStyle = '#0f0'; 
+                        ctx.fillRect(it.x, it.y, it.width, it.height); 
+                    } 
+                });
+                
+                ctx.fillStyle = '#fff';
+                balls.forEach(b => { 
+                    if(b.active) { ctx.beginPath(); ctx.arc(b.x, b.y, ballRadius, 0, Math.PI*2); ctx.fill(); } 
+                });
+                
+                if (state === 'gameover') {
+                    ctx.fillStyle = 'rgba(0, 0, 0, 0.85)'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    ctx.fillStyle = '#fff'; 
+                    ctx.font = 'bold 45px Arial';
+                    ctx.textAlign = 'center'; 
+                    ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2 - 20);
+                    ctx.font = '20px Arial'; 
+                    ctx.fillText('Tap to Restart', canvas.width / 2, canvas.height / 2 + 30);
+                }
+
+                if (flashAlpha > 0) {
+                    ctx.fillStyle = `rgba(255, 255, 255, ${flashAlpha})`;
+                    ctx.fillRect(0, 0, canvas.width, canvas.height);
+                    flashAlpha -= 0.05; 
+                }
+
+                update(); requestAnimationFrame(draw);
+            }
+
+            window.addEventListener('resize', resize);
+            canvas.addEventListener('touchstart', handleStart, {passive: false});
+            canvas.addEventListener('touchmove', handleMove, {passive: false});
+            canvas.addEventListener('touchend', handleEnd, {passive: false});
+            canvas.addEventListener('mousedown', handleStart);
+            window.addEventListener('mousemove', handleMove);
+            window.addEventListener('mouseup', handleEnd);
+            
+            resetGame(); 
+            draw();
+            
+        } catch(e) { showError('初期化エラー', e); }
+    </script>
+</body>
+</html>
