@@ -101,10 +101,8 @@
             let ballRadius = sizeValues[sizeIdx];
 
             let highScore = 0;
-            let lastScore = 0;
             try { 
                 highScore = parseInt(localStorage.getItem('ballisticHighScore')) || 0; 
-                lastScore = parseInt(localStorage.getItem('ballisticLastScore')) || 0; 
             } catch (e) {}
 
             let score = 0, level = 1, ballCount = 1, extraBallsNextTurn = 0;
@@ -118,6 +116,10 @@
             let flashAlpha = 0; 
             let turnStartState = null; 
             let previousTurnState = null; 
+            
+            // 【追加】1手ごとのスコア計算用変数
+            let lastTurnScore = 0; 
+            let turnStartScore = 0; 
             
             const blockCols = 7;
             const blockPadding = 4;
@@ -133,6 +135,7 @@
                 return {
                     score, level, ballCount, startX, startY, 
                     bombCount, nextBombScore,
+                    lastTurnScore, turnStartScore, // スコアの増分情報も保存
                     blocks: blocks.map(b => ({...b})),
                     items: items.map(i => ({...i}))
                 };
@@ -142,6 +145,7 @@
                 score = snap.score; level = snap.level; ballCount = snap.ballCount;
                 startX = snap.startX; startY = snap.startY; 
                 bombCount = snap.bombCount; nextBombScore = snap.nextBombScore;
+                lastTurnScore = snap.lastTurnScore; turnStartScore = snap.turnStartScore;
                 blocks = snap.blocks.map(b => ({...b}));
                 items = snap.items.map(i => ({...i}));
                 bombBtn.innerText = '💣 ' + bombCount;
@@ -155,6 +159,7 @@
             function resetGame() {
                 score = 0; level = 1; ballCount = 1; extraBallsNextTurn = 0;
                 bombCount = 3; nextBombScore = 10000; 
+                lastTurnScore = 0; turnStartScore = 0; 
                 blocks = []; items = []; nextStartX = null;
                 resize(); 
                 state = 'aiming';
@@ -179,8 +184,6 @@
                 if (isGameOver) {
                     state = 'gameover';
                     try {
-                        lastScore = score;
-                        localStorage.setItem('ballisticLastScore', lastScore);
                         if (score > highScore) { 
                             highScore = score; 
                             localStorage.setItem('ballisticHighScore', highScore); 
@@ -273,6 +276,10 @@
                 if (!isDragging || state !== 'aiming') return;
                 isDragging = false;
                 state = 'shooting'; nextStartX = null;
+                
+                // 【追加】発射時に現在のスコアを記録（ターン終了時の引き算に使う）
+                turnStartScore = score;
+
                 let dx = aimX - startX, dy = aimY - startY;
                 const angle = Math.atan2(dy < -10 ? dy : -10, dx);
                 
@@ -356,6 +363,9 @@
                     });
                     
                     if (activeBalls === 0) {
+                        // 【追加】ターン終了時に、この1手で稼いだスコアを計算して記録
+                        lastTurnScore = score - turnStartScore;
+                        
                         state = 'aiming'; level++; ballCount += extraBallsNextTurn; extraBallsNextTurn = 0;
                         if (nextStartX !== null) startX = nextStartX; 
                         
@@ -369,7 +379,6 @@
             function draw() {
                 ctx.clearRect(0, 0, canvas.width, canvas.height);
                 
-                // 【追加】背景グリッドの描画 (UIエリアを避けて y=90 付近からスタート)
                 const blockWidth = Math.max(10, (canvas.width - blockPadding * (blockCols + 1)) / blockCols);
                 const cellSize = blockWidth + blockPadding;
                 const gridStartY = 90 - blockPadding / 2;
@@ -378,13 +387,11 @@
                 ctx.strokeStyle = 'rgba(255, 255, 255, 0.1)';
                 ctx.lineWidth = 1;
                 ctx.beginPath();
-                // 縦線
                 for (let i = 0; i <= blockCols; i++) {
                     let x = blockPadding / 2 + i * cellSize;
                     ctx.moveTo(x, gridStartY);
                     ctx.lineTo(x, startY);
                 }
-                // 横線
                 for (let y = gridStartY; y <= startY; y += cellSize) {
                     ctx.moveTo(blockPadding / 2, y);
                     ctx.lineTo(gridEndX, y);
@@ -399,7 +406,8 @@
                 
                 ctx.textAlign = 'left';
                 ctx.textBaseline = 'top';
-                ctx.fillText(`LAST: ${lastScore}`, 15, 20);
+                // 【変更】LASTには前回の1手で稼いだスコアを表示
+                ctx.fillText(`LAST: ${lastTurnScore}`, 15, 20);
                 ctx.fillText(`BEST: ${highScore}`, 15, 45);
                 
                 ctx.textAlign = 'right';
